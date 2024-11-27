@@ -4,11 +4,13 @@ import * as XLSX from 'xlsx';
 import LineCharts from './components/LineCharts';
 import Heatmap from './components/Heatmap';
 import SeasonalDecomposition from './components/SeasonalDecomposition';
+import SpiderChart from './components/SpiderChart';
 
 const App = () => {
   const [data, setData] = useState (null);
   const [correlationMatrix, setCorrelationMatrix] = useState (null);
   const [seasonalData, setSeasonalData] = useState (null);
+  const [spiderChartData, setSpiderChartData] = useState ([]);
 
   useEffect (() => {
     const fetchData = async () => {
@@ -19,12 +21,10 @@ const App = () => {
 
         const rawData = new Uint8Array (response.data);
         const workbook = XLSX.read (rawData, {type: 'array'});
-
         const dataSheet = XLSX.utils.sheet_to_json (
           workbook.Sheets[workbook.SheetNames[0]],
           {header: 1}
         );
-
         const [header, ...rows] = dataSheet;
 
         const formattedData = rows.reduce ((acc, row) => {
@@ -40,7 +40,6 @@ const App = () => {
         const numericData = Object.keys (formattedData).filter (
           key => key !== 'dt'
         );
-
         const matrix = numericData.map ((_, i) =>
           numericData.map ((_, j) =>
             pearsonCorrelation (
@@ -49,7 +48,6 @@ const App = () => {
             )
           )
         );
-
         setCorrelationMatrix (matrix);
 
         const dtValues = formattedData.dt.map (
@@ -63,8 +61,10 @@ const App = () => {
         const trend = calculateTrend (observed, 24);
         const seasonal = calculateSeasonal (observed, trend, 24);
         const residual = calculateResidual (observed, trend, seasonal);
-
         setSeasonalData ({dt: dtValues, observed, trend, seasonal, residual});
+
+        const spiderData = calculateSpiderChartData (formattedData);
+        setSpiderChartData (spiderData);
       } catch (error) {
         console.error ('Error loading data:', error);
       }
@@ -85,31 +85,26 @@ const App = () => {
       ],
       [0, 0, 0, 0, 0]
     );
-
     const numerator = n * sumXY - sumX * sumY;
     const denominator = Math.sqrt (
       (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY)
     );
-
     return numerator / denominator;
   };
 
   const calculateTrend = (data, windowSize) => {
     const trend = Array (data.length).fill (null);
     const halfWindow = Math.floor (windowSize / 2);
-
     for (let i = halfWindow; i < data.length - halfWindow; i++) {
       const window = data.slice (i - halfWindow, i + halfWindow + 1);
       trend[i] = window.reduce ((sum, val) => sum + val, 0) / window.length;
     }
-
     return trend;
   };
 
   const calculateSeasonal = (observed, trend, period) => {
     const seasonal = Array (period).fill (0);
     const counts = Array (period).fill (0);
-
     for (let i = 0; i < observed.length; i++) {
       if (trend[i] !== null) {
         const index = i % period;
@@ -117,22 +112,26 @@ const App = () => {
         counts[index]++;
       }
     }
-
     for (let i = 0; i < period; i++) {
       seasonal[i] = counts[i] ? seasonal[i] / counts[i] : 0;
     }
-
     return observed.map ((_, i) => seasonal[i % period]);
   };
 
   const calculateResidual = (observed, trend, seasonal) => {
     return observed
-      .map ((val, i) => {
-        const t = trend[i] || 0;
-        const s = seasonal[i] || 0;
-        return val - t - s;
-      })
-      .map (r => Math.max (-2, Math.min (2, r))); // Ensure residuals are clamped between -2 and 2
+      .map ((val, i) => val - (trend[i] || 0) - (seasonal[i] || 0))
+      .map (r => Math.max (-2, Math.min (2, r)));
+  };
+
+  const calculateSpiderChartData = data => {
+    const metrics = ['temp', 'humidity', 'wind_speed', 'precipitation']; // Update to match actual keys
+    return metrics.map (metric => ({
+      metric,
+      value: data[metric]
+        ? data[metric].reduce ((a, b) => a + b, 0) / data[metric].length
+        : 0,
+    }));
   };
 
   if (!data || !correlationMatrix || !seasonalData) {
@@ -141,15 +140,7 @@ const App = () => {
 
   return (
     <div>
-      <h1
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '50px',
-          fontWeight: 'bold',
-        }}
-      >
+      <h1 style={{textAlign: 'center', fontSize: '50px', fontWeight: 'bold'}}>
         Weather Analysis
       </h1>
       <h1>Line chart</h1>
@@ -161,6 +152,8 @@ const App = () => {
       />
       <h1>Seasonal</h1>
       <SeasonalDecomposition decomposition={seasonalData} />
+      <h1>Spider chart</h1>
+      <SpiderChart data={spiderChartData} />
     </div>
   );
 };
